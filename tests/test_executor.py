@@ -18,10 +18,15 @@ PRICES = {"KRW-BTC": 100.0, "KRW-ETH": 50.0, "KRW-XRP": 10.0}
 
 
 def decide(*allocs, **kw) -> Decision:
+    # confidence 기본값 100 — 대부분의 테스트는 정확한 주문 금액을 검증하므로
+    # 확신도 스케일링이 끼어들지 않게 한다. 스케일링 자체는 아래 전용 테스트에서 본다.
     return Decision(
-        allocations=[Allocation(**a) for a in allocs],
-        rationale=kw.get("rationale", "테스트 판단"),
-        risk_comment="",
+        market_regime=kw.get("market_regime", "횡보"),
+        decision=kw.get("decision", "BUY"),
+        confidence=kw.get("confidence", 100),
+        reason=kw.get("reason", "테스트 판단"),
+        target_allocations=[Allocation(**a) for a in allocs],
+        risk_check="",
         memory_note="",
         next_check_hours=4,
     )
@@ -290,8 +295,59 @@ def test_empty_allocations_liquidates_everything(ex, store, broker):
     assert store.get_position("KRW-ETH") is None
 
 
-def test_rationale_is_stored_with_trade(ex, store, broker):
-    ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, rationale="RSI 과매도 진입"), "c1")
+def test_reason_is_stored_with_trade(ex, store, broker):
+    ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, reason="RSI 과매도 진입"), "c1")
     trade = store.list_trades()[0]
     assert trade["reason_text"] == "RSI 과매도 진입", "대시보드에서 '왜 샀는지'를 봐야 한다"
     assert trade["cycle_id"] == "c1"
+
+
+# --------------------------------------------------------- confidence 게이팅
+
+def test_low_confidence_blocks_buys(ex, broker):
+    """확신도 60 미만은 '불확실' 구간 — 신규 매수를 아예 막는다."""
+    result = ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, confidence=55), "c1")
+
+    assert broker.buys == []
+    assert any("확신도 55" in n.detail for n in notes_of(result, "rejected"))
+
+
+def test_low_confidence_still_allows_sells(ex, store, broker):
+    """확신이 없어도 리스크를 줄이는 매도는 허용한다 — 막으면 손실을 방치하게 된다."""
+    store.apply_buy("KRW-ETH", 1_000.0, 50.0, settings.stop_loss_pct)
+    broker.holdings["KRW-ETH"] = 1_000.0
+    broker.cash = 50_000.0
+
+    ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, confidence=40), "c1")
+
+    assert broker.sells == [("KRW-ETH", 1_000.0)], "확신도와 무관하게 매도는 나가야 한다"
+    assert broker.buys == []
+
+
+def test_confidence_scales_order_size(ex, broker):
+    result = ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, confidence=80), "c1")
+
+    # 목표 30% × 확신도 80% = 24,000원
+    assert broker.buys == [("KRW-BTC", 24_000.0)]
+    assert any("확신도 80" in n.detail for n in notes_of(result, "clamped"))
+
+
+def test_full_confidence_does_not_shrink_order(ex, broker):
+    ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, confidence=100), "c1")
+    assert broker.buys == [("KRW-BTC", 30_000.0)]
+
+
+def test_confidence_boundary_at_60(ex, broker):
+    ex.execute(decide({"market": "KRW-BTC", "weight": 0.3}, confidence=60), "c1")
+    assert broker.buys == [("KRW-BTC", 18_000.0)], "60은 허용 구간 (30% × 60% = 18,000원)"
+
+
+def test_low_confidence_does_not_force_selling(ex, store, broker):
+    """확신도로 목표 비중 자체를 깎으면 보유분을 강제 매도하게 된다 — 그러면 안 된다."""
+    store.apply_buy("KRW-BTC", 300.0, 100.0, settings.stop_loss_pct)
+    broker.holdings["KRW-BTC"] = 300.0
+    broker.cash = 70_000.0
+
+    ex.execute(decide({"market": "KRW-BTC", "weight": 0.30}, confidence=50), "c1")
+
+    assert broker.sells == [], "확신도가 낮다고 들고 있던 걸 팔라는 뜻은 아니다"

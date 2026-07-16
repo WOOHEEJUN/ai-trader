@@ -17,7 +17,12 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 LOG_DIR = BASE_DIR / "logs"
 DB_PATH = DATA_DIR / "trader.db"
-STRATEGY_MEMORY_PATH = DATA_DIR / "strategy_memory.md"
+
+# 전략 메모리 — 세 갈래로 나눈다. kill 시 셋 다 초기화된다 (백지 상태로 재시작).
+MEMORY_DIR = DATA_DIR / "memory"
+STRATEGY_PATH = MEMORY_DIR / "strategy.md"   # 현재 적용 중인 전략
+JOURNAL_PATH = MEMORY_DIR / "journal.md"     # 주간 회고 (누적)
+MISTAKES_PATH = MEMORY_DIR / "mistakes.md"   # 반복하지 말아야 할 실수
 
 
 class Settings(BaseSettings):
@@ -87,6 +92,10 @@ class Settings(BaseSettings):
     effort_throttled: str = "medium"
     max_tokens: int = 8_000
 
+    # confidence 게이팅 — Claude가 낸 확신도로 주문 크기를 조절한다.
+    # 60 미만은 "정보 부족/불확실" 구간이라 신규 매수를 아예 막는다 (매도는 항상 허용).
+    min_confidence_to_buy: int = 60
+
     # --------------------------------------------------------------- 거래소
     upbit_fee_rate: float = 0.0005  # 편도 0.05%
     min_order_krw: int = 5_000      # 업비트 최소주문금액
@@ -143,4 +152,5 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
 
 def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)

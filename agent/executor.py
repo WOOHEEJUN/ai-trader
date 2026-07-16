@@ -97,7 +97,8 @@ class Executor:
         cooldown = hours_until_judge() <= settings.pre_judge_cooldown_hours
         current = {m: h["value_krw"] / working_capital for m, h in holdings.items()}
 
-        plans = self._build_plans(targets, current, prices, holdings, working_capital, cooldown, result)
+        plans = self._build_plans(targets, current, prices, holdings, working_capital,
+                                  cooldown, decision.confidence, result)
 
         # 일일 매매 예산: 변화폭이 큰 주문부터 채운다 (#4)
         remaining = tier.max_daily_trades - self.store.count_trades_today()
@@ -109,7 +110,7 @@ class Executor:
             plans = plans[:max(remaining, 0)]
 
         for plan in plans:
-            self._place(plan, cycle_id, decision.rationale, result)
+            self._place(plan, cycle_id, decision.reason, result)
 
         self._sync_stop_losses(targets, result)
         return result
@@ -117,7 +118,7 @@ class Executor:
     # --------------------------------------------------- 목표 비중 정규화
     def _resolve_targets(self, decision: Decision, universe: set[str], result: ExecutionResult) -> dict[str, dict]:
         targets: dict[str, dict] = {}
-        for alloc in decision.allocations:
+        for alloc in decision.target_allocations:
             market = alloc.market.strip().upper()
 
             if market not in universe:
@@ -157,9 +158,13 @@ class Executor:
     # ------------------------------------------------------- 주문 계획 수립
     def _build_plans(
         self, targets: dict, current: dict, prices: dict, holdings: dict,
-        working_capital: float, cooldown: bool, result: ExecutionResult,
+        working_capital: float, cooldown: bool, confidence: int, result: ExecutionResult,
     ) -> list[dict]:
         plans: list[dict] = []
+        # confidence는 매수에만 적용한다. 목표 비중 자체를 깎으면 확신도가 낮을 때
+        # 오히려 보유분을 강제로 팔게 되는데, 그건 "확신 없으면 쉬어라"의 반대다.
+        low_confidence = confidence < settings.min_confidence_to_buy
+        confidence_scale = confidence / 100.0
         for market in set(targets) | set(current):
             target_w = targets.get(market, {}).get("weight", 0.0)
             current_w = current.get(market, 0.0)
@@ -184,7 +189,17 @@ class Executor:
                     result.notes.append(Note(market, "buy", "rejected",
                                              "평가 전 24시간 쿨다운 — 신규 매수/비중 확대 차단"))
                     continue
-                krw = delta * working_capital
+                if low_confidence:
+                    result.notes.append(Note(
+                        market, "buy", "rejected",
+                        f"확신도 {confidence} < {settings.min_confidence_to_buy} — "
+                        f"불확실 구간이라 신규 매수 차단 (매도는 허용)"))
+                    continue
+                krw = delta * working_capital * confidence_scale
+                if confidence < 100:
+                    result.notes.append(Note(
+                        market, "buy", "clamped",
+                        f"확신도 {confidence} 반영 — 주문금액을 {confidence_scale:.0%}로 축소"))
                 cap = settings.max_order_ratio * working_capital
                 if krw > cap:
                     result.notes.append(Note(market, "buy", "clamped",

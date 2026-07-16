@@ -1,13 +1,14 @@
 """잡 4종.
 
-  watchdog  : 60초    — 손절/익절/트레일링/서킷브레이커 (LLM 미사용)
-  snapshot  : 60분    — 자산 스냅샷 (수익률·자산곡선·서킷브레이커 기준선)
-  cycle     : 5분 틱  — `next_cycle_at`이 지났으면 트레이딩 사이클 실행
-  judge     : 주 1회  — 월요일 09:00 KST 주간 평가
+  watchdog  : 60초   — 손절/익절/트레일링/서킷브레이커 (LLM 미사용)
+  snapshot  : 60분   — 자산 스냅샷 (수익률·자산곡선·서킷브레이커 기준선)
+  screener  : 60분   — 지표 계산(무료) → 볼 게 있을 때만 Claude 호출
+  judge     : 주 1회 — 월요일 09:00 KST 주간 평가
 
-사이클을 고정 주기가 아니라 "틱 + 예정시각 확인"으로 돌리는 이유: Claude가 다음 체크
-시점을 직접 정하는데(1~24시간), 그 시점을 DB에 저장해두면 프로세스가 재시작해도
-스케줄이 그대로 이어진다. APScheduler의 date 트리거를 쓰면 재시작 시 유실된다.
+사이클을 고정 주기로 돌리지 않는 이유: 매시간 Claude를 부르면 월 $13~19로 예산을 넘는다.
+스크리너가 1시간마다 지표를 계산하되(비용 0원), Claude가 예약한 시각이 됐거나 신호가
+잡혔을 때만 호출한다. 예약 시각은 DB(`next_cycle_at`)에 있어 프로세스가 재시작해도
+이어진다 — APScheduler의 date 트리거를 쓰면 재시작 시 유실된다.
 """
 from __future__ import annotations
 
@@ -20,8 +21,9 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
-from agent.cycle import NEXT_CYCLE_AT_KEY, run_cycle
+from agent.cycle import run_cycle
 from agent.judge import run_judge
+from agent.screener import screen
 from agent.watchdog import Watchdog, compute_portfolio
 from config import KST, settings
 from exchange.upbit_client import Broker, get_broker
@@ -44,16 +46,14 @@ def snapshot_job(store: Store, broker: Broker) -> None:
     logger.debug(f"[스냅샷] 총 {total:,.0f}원 (현금 {cash:,.0f}원)")
 
 
-def cycle_tick(store: Store, broker: Broker) -> None:
-    """예정 시각이 지났을 때만 사이클을 돈다."""
-    next_at = store.get_state(NEXT_CYCLE_AT_KEY)
-    if next_at:
-        try:
-            if now_kst() < datetime.fromisoformat(next_at):
-                return
-        except ValueError:
-            logger.warning(f"[스케줄러] next_cycle_at 파싱 실패({next_at}) — 즉시 실행")
-    run_cycle(store, broker)
+def screener_tick(store: Store, broker: Broker) -> None:
+    """1시간마다 지표를 계산하고(무료), 볼 게 있을 때만 Claude를 부른다."""
+    result = screen(store, broker)
+    if not result.should_call:
+        logger.info(f"[스크리너] 판단 생략 — {result.reason}")
+        return
+    logger.info(f"[스크리너] Claude 호출 — {result.reason}")
+    run_cycle(store, broker, screen_result=result)
 
 
 def build_scheduler(
@@ -81,9 +81,10 @@ def build_scheduler(
     )
 
     sched.add_job(
-        _guard("cycle", lambda: cycle_tick(store, broker)),
-        IntervalTrigger(minutes=5),
-        id="cycle", max_instances=1, coalesce=True, misfire_grace_time=300,
+        _guard("screener", lambda: screener_tick(store, broker)),
+        IntervalTrigger(minutes=settings.screener_interval_minutes),
+        id="screener", max_instances=1, coalesce=True, misfire_grace_time=600,
+        next_run_time=now_kst(),
     )
 
     sched.add_job(

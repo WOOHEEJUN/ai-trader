@@ -12,7 +12,10 @@ from state.store import Store
 def store(tmp_path, monkeypatch):
     from state import store as store_mod
 
-    monkeypatch.setattr(store_mod, "STRATEGY_MEMORY_PATH", tmp_path / "strategy_memory.md")
+    # 메모리 3종을 tmp_path로 격리한다 — 안 그러면 테스트가 실제 data/memory를 지운다.
+    monkeypatch.setattr(store_mod, "STRATEGY_PATH", tmp_path / "strategy.md")
+    monkeypatch.setattr(store_mod, "MISTAKES_PATH", tmp_path / "mistakes.md")
+    monkeypatch.setattr(store_mod, "JOURNAL_PATH", tmp_path / "journal.md")
     return Store(db_path=tmp_path / "test.db")
 
 

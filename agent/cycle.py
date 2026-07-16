@@ -13,6 +13,7 @@ from loguru import logger
 
 from agent.budget import BudgetManager
 from agent.executor import Executor, Note
+from agent.screener import ScreenResult
 from agent.strategist import Decision, Strategist
 from agent.watchdog import REASON_LABELS
 from config import settings
@@ -51,7 +52,16 @@ def _recent_liquidations(store: Store) -> list[dict]:
     ]
 
 
-def run_cycle(store: Optional[Store] = None, broker: Optional[Broker] = None) -> CycleResult:
+def run_cycle(
+    store: Optional[Store] = None,
+    broker: Optional[Broker] = None,
+    screen_result: Optional["ScreenResult"] = None,
+) -> CycleResult:
+    """판단 → 실행 → 다음 시점 예약.
+
+    `screen_result`를 주면 스크리너가 이미 계산한 지표를 재사용한다 (업비트 왕복 절약).
+    없으면 직접 수집한다 — 수동 실행(`python -m agent.cycle`) 경로다.
+    """
     store = store or get_store()
     broker = broker or get_broker(store)
     now = now_kst()
@@ -61,7 +71,13 @@ def run_cycle(store: Optional[Store] = None, broker: Optional[Broker] = None) ->
     rejections = store.get_state(PENDING_NOTES_KEY, []) or []
 
     out = Strategist(store, broker).decide(
-        cycle_id, liquidations=liquidations, rejections=rejections
+        cycle_id,
+        rows=screen_result.indicators if screen_result else None,
+        signals=screen_result.signals if screen_result else None,
+        liquidations=liquidations,
+        rejections=rejections,
+        # 예약 시각 도달이 아니라 신호로 깨어난 호출이면 일일 신호 상한을 차감한다
+        scheduled=not (screen_result and screen_result.reason.startswith("신호")),
     )
     budget = BudgetManager(store).status()
 
@@ -79,6 +95,10 @@ def run_cycle(store: Optional[Store] = None, broker: Optional[Broker] = None) ->
 
     result = Executor(store, broker).execute(out.decision, cycle_id)
 
+    # 전략을 바꿨으면 strategy.md를 통째로 교체한다 (누적이 아니라 '현재 적용 중인 것')
+    if out.decision.strategy_update and out.decision.strategy_update.strip():
+        store.write_strategy(out.decision.strategy_update)
+        logger.info("[사이클] 전략 갱신됨 — strategy.md 교체")
     if out.decision.memory_note.strip():
         store.append_memory(out.decision.memory_note)
 
@@ -95,7 +115,7 @@ def run_cycle(store: Optional[Store] = None, broker: Optional[Broker] = None) ->
     store.record_cycle(
         cycle_id,
         decision=out.decision.model_dump(),
-        rationale=out.decision.rationale,
+        rationale=out.decision.reason,
         next_check_at=next_at.isoformat(),
         traded=result.traded,
     )

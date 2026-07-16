@@ -15,7 +15,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
 
-from config import DB_PATH, KST, STRATEGY_MEMORY_PATH, ensure_dirs
+from config import (
+    DB_PATH,
+    JOURNAL_PATH,
+    KST,
+    MISTAKES_PATH,
+    STRATEGY_PATH,
+    ensure_dirs,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -103,10 +110,22 @@ CREATE TABLE IF NOT EXISTS runtime_state (
 );
 """
 
-MEMORY_HEADER = """# 전략 메모리
+STRATEGY_HEADER = """# 전략 (strategy.md)
 
-Claude가 매 사이클마다 스스로 갱신하는 노트. 주간 평가 실패 시 이 파일만 초기화된다.
-거래 로그와 스냅샷은 보존되므로, 새 세대는 "과거의 나"가 무엇을 했는지 모른 채 시작한다.
+현재 적용 중인 전략. Claude가 매 사이클 읽고, 바꿀 이유가 있을 때 갱신한다.
+주간 평가 실패 시 이 파일은 초기화된다 — 거래 로그는 보존되지만 새 세대는 그것을
+읽을 수 없으므로, "과거의 나"가 무엇을 했는지 모른 채 시작한다.
+"""
+
+MISTAKES_HEADER = """# 반복하지 말아야 할 실수 (mistakes.md)
+
+주간 회고에서 확인된, 되풀이되는 실수. 매 사이클 전략 다음으로 읽는다.
+kill 시 함께 초기화된다 — 새 세대는 같은 실수를 다시 겪어야 한다.
+"""
+
+JOURNAL_HEADER = """# 주간 회고 (journal.md)
+
+주간 평가 직후 작성되는 사후 회고. 누적되며, 프롬프트에는 최근 것만 들어간다.
 """
 
 
@@ -402,21 +421,69 @@ class Store:
         return self._query("SELECT * FROM cycles ORDER BY ts DESC LIMIT ?", (limit,))
 
     # ----------------------------------------------------- strategy memory
+    # 세 갈래로 나눈다. 매 사이클 strategy → mistakes → journal 순으로 읽히고,
+    # kill 시엔 셋 다 초기화된다 — 새 세대는 백지에서 시작해야 하므로 mistakes도 예외가 아니다.
+
+    def _read_or_init(self, path, header: str) -> str:
+        if not path.exists():
+            ensure_dirs()
+            path.write_text(header, encoding="utf-8")
+        return path.read_text(encoding="utf-8")
+
+    def read_strategy(self) -> str:
+        return self._read_or_init(STRATEGY_PATH, STRATEGY_HEADER)
+
+    def write_strategy(self, text: str) -> None:
+        """전략은 누적이 아니라 '현재 적용 중인 것'으로 통째로 교체한다."""
+        ensure_dirs()
+        STRATEGY_PATH.write_text(
+            f"{STRATEGY_HEADER}\n_최종 갱신: {now_kst():%Y-%m-%d %H:%M} KST_\n\n{text.strip()}\n",
+            encoding="utf-8",
+        )
+
+    def read_mistakes(self) -> str:
+        return self._read_or_init(MISTAKES_PATH, MISTAKES_HEADER)
+
+    def write_mistakes(self, text: str) -> None:
+        ensure_dirs()
+        MISTAKES_PATH.write_text(
+            f"{MISTAKES_HEADER}\n_최종 갱신: {now_kst():%Y-%m-%d %H:%M} KST_\n\n{text.strip()}\n",
+            encoding="utf-8",
+        )
+
+    def read_journal(self, last_n: int = 1) -> str:
+        """주간 회고. 최근 last_n개만 — 전부 넣으면 매 사이클 컨텍스트가 샌다."""
+        text = self._read_or_init(JOURNAL_PATH, JOURNAL_HEADER)
+        entries = text.split("\n## ")[1:]
+        if not entries:
+            return ""
+        return "\n\n".join(f"## {e.strip()}" for e in entries[-last_n:])
+
+    def append_journal(self, entry: str) -> None:
+        self._read_or_init(JOURNAL_PATH, JOURNAL_HEADER)
+        with JOURNAL_PATH.open("a", encoding="utf-8") as f:
+            f.write(f"\n## {now_kst():%Y-%m-%d} 주간 회고\n\n{entry.strip()}\n")
+
     def read_memory(self) -> str:
-        if not STRATEGY_MEMORY_PATH.exists():
-            self.reset_memory()
-        return STRATEGY_MEMORY_PATH.read_text(encoding="utf-8")
+        """프롬프트용 통합 뷰. 스펙의 읽기 순서(전략 → 실수 → 최근 회고)를 따른다."""
+        parts = [self.read_strategy().strip(), self.read_mistakes().strip()]
+        journal = self.read_journal(last_n=1).strip()
+        if journal:
+            parts.append(f"# 최근 주간 회고\n\n{journal}")
+        return "\n\n---\n\n".join(p for p in parts if p)
 
     def append_memory(self, note: str) -> None:
-        if not STRATEGY_MEMORY_PATH.exists():
-            self.reset_memory()
-        with STRATEGY_MEMORY_PATH.open("a", encoding="utf-8") as f:
+        """사이클 단위 관찰 노트. 전략 파일 뒤에 붙는다."""
+        self._read_or_init(STRATEGY_PATH, STRATEGY_HEADER)
+        with STRATEGY_PATH.open("a", encoding="utf-8") as f:
             f.write(f"\n## {now_kst():%Y-%m-%d %H:%M} KST\n\n{note.strip()}\n")
 
     def reset_memory(self) -> None:
-        """kill 이벤트. 전략 메모리만 지운다 — 거래 로그/스냅샷은 건드리지 않는다."""
+        """kill 이벤트. 전략 메모리 3종만 초기화 — 거래 로그/스냅샷은 건드리지 않는다."""
         ensure_dirs()
-        STRATEGY_MEMORY_PATH.write_text(MEMORY_HEADER, encoding="utf-8")
+        STRATEGY_PATH.write_text(STRATEGY_HEADER, encoding="utf-8")
+        MISTAKES_PATH.write_text(MISTAKES_HEADER, encoding="utf-8")
+        JOURNAL_PATH.write_text(JOURNAL_HEADER, encoding="utf-8")
 
 
 _store: Optional[Store] = None
