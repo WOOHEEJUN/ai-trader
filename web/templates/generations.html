@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}세대 히스토리 · AI Trader{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>세대 히스토리 <span class="hint">현재 {{ s.status.generation }}세대 · Lv{{ s.status.level }}</span></h2>
+
+  {% if not evals %}
+  <div class="empty">아직 주간 평가가 없다 (매주 월요일 09:00 KST)</div>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>평가일</th><th>세대</th><th class="r">시작</th><th class="r">종료</th>
+        <th class="r">수익률</th><th>결과</th><th class="r">레벨</th>
+      </tr></thead>
+      <tbody>
+      {% for e in evals %}
+      <tr class="{{ 'killed' if e.killed else 'survived' }}">
+        <td>{{ e.ts | dt }}</td>
+        <td>{{ e.generation }}세대</td>
+        <td class="r">{{ e.start_krw | krw }}</td>
+        <td class="r">{{ e.end_krw | krw }}</td>
+        <td class="r {{ e.pnl_pct | sign }}">{{ e.pnl_pct | pct }}</td>
+        <td>
+          {% if e.killed %}<span class="tag danger">💀 kill</span>
+          {% else %}<span class="tag ok">✅ 생존</span>{% endif %}
+        </td>
+        <td class="r">{{ e.level_before }} → {{ e.level_after }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <p class="hint">
+    성공 시 전략 메모리 보존 + 권한 확대(일일 매매 +2건, 유니버스 +5개, 운용 한도 +5만원).
+    실패 시 전략 메모리만 초기화되고 거래 기록은 보존된다.
+  </p>
+</section>
+
+<section class="panel">
+  <h2>세대별 생존 기간</h2>
+  {% if evals %}
+  <div class="lifespans">
+    {% for g, weeks in lifespans %}
+    <div class="lifespan">
+      <span class="gen-label">{{ g }}세대</span>
+      <div class="weeks">
+        {% for w in weeks %}
+        <span class="week {{ 'survived' if w else 'killed' }}" title="{{ '생존' if w else 'kill' }}"></span>
+        {% endfor %}
+      </div>
+      <span class="hint">{{ weeks | length }}주</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">평가 이력이 쌓이면 세대별로 몇 주 살아남았는지 보인다</div>
+  {% endif %}
+</section>
+
+{% endblock %}

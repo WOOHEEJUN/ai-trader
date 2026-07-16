@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}청산 감시 · AI Trader{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>청산 감시 <span class="hint">1분 주기 · Claude 미사용 (API 비용 0원)</span></h2>
+  <div class="kv">
+    <div><span>마지막 실행</span><b id="last-run">{{ s.status.watchdog_last_run | dt }}</b></div>
+    <div><span>서킷브레이커</span>
+      <b class="{{ 'danger-text' if s.status.circuit_breaker }}">
+        {{ '🚨 발동 (' ~ s.status.circuit_breaker_date ~ ')' if s.status.circuit_breaker else '정상' }}
+      </b></div>
+  </div>
+  <p class="hint">
+    예산이 소진돼 판단이 멈춰도 이 감시는 계속 돈다. 포지션은 방치되지 않는다.
+  </p>
+</section>
+
+<section class="panel">
+  <h2>포지션별 감시 상태</h2>
+  {% if not s.positions %}
+  <div class="empty">감시 중인 포지션 없음</div>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>코인</th><th class="r">평단</th><th class="r">현재가</th><th class="r">손익</th>
+        <th class="r">손절선</th><th class="r">손절까지</th><th class="r">고점</th><th>상태</th>
+      </tr></thead>
+      <tbody>
+      {% for p in s.positions %}
+      <tr>
+        <td>{{ p.market.replace('KRW-','') }}</td>
+        <td class="r">{{ p.avg_price | krw }}</td>
+        <td class="r">{{ p.price | krw }}</td>
+        <td class="r {{ p.pnl_pct | sign }}">{{ p.pnl_pct | pct }}</td>
+        <td class="r">{{ p.stop_loss_pct | pct }}</td>
+        <td class="r warn-text">{{ p.stop_distance | pct }}</td>
+        <td class="r">{{ p.peak_price | krw }}</td>
+        <td>
+          {% if p.take_profit_done %}
+            <span class="tag ok">익절 완료 · 트레일링 감시</span>
+          {% else %}
+            <span class="tag">익절 대기 (+15%)</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>규칙</h2>
+  <div class="rules">
+    <div class="rule"><b>손절</b><span>진입 평단 대비 −7% (Claude가 −1%~−10% 범위에서 조정 가능) → 전량 매도</span></div>
+    <div class="rule"><b>익절</b><span>진입 평단 대비 +15% → 절반 매도, 잔량은 트레일링으로 전환</span></div>
+    <div class="rule"><b>트레일링</b><span>익절 발동 후 고점 대비 −5% → 잔량 전량 매도</span></div>
+    <div class="rule"><b>서킷브레이커</b><span>당일 총평가액 −15% → 전 포지션 청산 + 당일 매매 중단</span></div>
+  </div>
+  <p class="hint">우선순위: 손절 &gt; 트레일링 &gt; 익절. 손실 확대 방지가 수익 실현보다 앞선다.</p>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>setTimeout(() => location.reload(), 30000);</script>
+{% endblock %}

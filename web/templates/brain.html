@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}AI 두뇌 · AI Trader{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>전략 메모리 <span class="hint">{{ s.status.generation }}세대 · 실패하면 초기화된다</span></h2>
+  <pre class="memory">{{ memory }}</pre>
+</section>
+
+<section class="panel">
+  <h2>판단 타임라인 <span class="hint">매매 없이 "보유"로 끝난 사이클 포함</span></h2>
+  {% if not cycles %}<div class="empty">아직 사이클이 없다</div>{% endif %}
+  <div class="cycles">
+    {% for c in cycles %}
+    <article class="cyc {{ 'traded' if c.traded else 'held' }}">
+      <div class="cyc-head" onclick="this.parentElement.classList.toggle('open')">
+        <span class="dot"></span>
+        <span class="when">{{ c.ts | dt }}</span>
+        {% if c.skipped %}
+          <span class="tag warn">판단 생략</span>
+        {% elif c.traded %}
+          <span class="tag buy">매매</span>
+        {% else %}
+          <span class="tag">보유</span>
+        {% endif %}
+        <span class="cyc-sum">{{ (c.rationale or c.skipped or '')[:70] }}{{ '…' if (c.rationale or c.skipped or '') | length > 70 }}</span>
+        <span class="caret">▾</span>
+      </div>
+      <div class="cyc-body">
+        {% if c.skipped %}
+          <p class="reason warn-text">{{ c.skipped }}</p>
+        {% else %}
+          {% if c.decision and c.decision.allocations %}
+          <div class="allocs">
+            {% for a in c.decision.allocations %}
+            <span class="alloc">{{ a.market.replace('KRW-','') }} {{ '%.0f' % (a.weight * 100) }}%
+              {%- if a.stop_loss_pct %} <i>손절 {{ '%.0f' % (a.stop_loss_pct * 100) }}%</i>{% endif %}</span>
+            {% endfor %}
+          </div>
+          {% elif c.decision %}
+          <div class="allocs"><span class="alloc">전량 현금</span></div>
+          {% endif %}
+          {% if c.rationale %}<p class="reason"><b>판단 사유</b><br>{{ c.rationale }}</p>{% endif %}
+          {% if c.decision and c.decision.risk_comment %}
+          <p class="reason"><b>리스크</b><br>{{ c.decision.risk_comment }}</p>{% endif %}
+          {% if c.decision and c.decision.memory_note %}
+          <p class="reason"><b>메모리 노트</b><br>{{ c.decision.memory_note }}</p>{% endif %}
+        {% endif %}
+        <div class="kv"><div><span>다음 체크</span><b>{{ c.next_check_at | dt }}</b></div></div>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}

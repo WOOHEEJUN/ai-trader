@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}홈 · AI Trader{% endblock %}
+{% block content %}
+
+<section class="cards">
+  <div class="card">
+    <div class="k">오늘</div>
+    <div class="v {{ s.returns.today | sign }}">{{ s.returns.today | pct }}</div>
+  </div>
+  <div class="card">
+    <div class="k">주간</div>
+    <div class="v {{ s.returns.week | sign }}">{{ s.returns.week | pct }}</div>
+  </div>
+  <div class="card">
+    <div class="k">월간</div>
+    <div class="v {{ s.returns.month | sign }}">{{ s.returns.month | pct }}</div>
+  </div>
+  <div class="card">
+    <div class="k">전체</div>
+    <div class="v {{ s.returns.all | sign }}">{{ s.returns.all | pct }}</div>
+    <div class="sub {{ s.pnl_all_krw | sign }}">{{ s.pnl_all_krw | krw }}원</div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="total-row">
+    <div>
+      <div class="k">총 평가액</div>
+      <div class="total">{{ s.total_krw | krw }}<span class="won">원</span></div>
+      <div class="sub">현금 {{ s.cash_krw | krw }}원 · 코인 {{ s.coin_krw | krw }}원</div>
+    </div>
+    <div class="periods">
+      <button data-p="1d">1일</button>
+      <button data-p="1w" class="on">1주</button>
+      <button data-p="1m">1개월</button>
+      <button data-p="all">전체</button>
+    </div>
+  </div>
+  <div class="chart-wrap"><canvas id="equity"></canvas></div>
+  <div id="equity-msg" class="empty" hidden>스냅샷이 아직 부족하다 (매시 정각에 쌓인다)</div>
+</section>
+
+<section class="panel">
+  <h2>포트폴리오</h2>
+  {% if s.positions %}
+  <div class="split">
+    <div>
+      <div class="chart-wrap donut"><canvas id="donut"></canvas></div>
+      <div id="legend" class="legend"></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>코인</th><th class="r">비중</th><th class="r">평가액</th>
+          <th class="r">손익</th><th class="r">손절까지</th>
+        </tr></thead>
+        <tbody>
+        {% for p in s.positions %}
+          <tr>
+            <td>
+              {{ p.market.replace('KRW-','') }}
+              {% if p.take_profit_done %}<span class="tag">트레일링</span>{% endif %}
+            </td>
+            <td class="r">{{ '%.1f' % (p.weight * 100) }}%</td>
+            <td class="r">{{ p.value_krw | krw }}</td>
+            <td class="r {{ p.pnl_pct | sign }}">{{ p.pnl_pct | pct }}</td>
+            <td class="r warn-text">{{ p.stop_distance | pct }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="hint">"손절까지"는 현재가가 몇 % 더 빠지면 자동 손절되는지를 뜻한다.</p>
+    </div>
+  </div>
+  {% else %}
+  <div class="empty">보유 코인 없음 (전액 현금)</div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>상태</h2>
+  <div class="kv">
+    <div><span>다음 사이클</span><b>{{ s.status.next_cycle_at | dt }}</b></div>
+    <div><span>오늘 매매 예산</span><b>{{ s.status.max_daily_trades - s.status.trades_today }}/{{ s.status.max_daily_trades }}건</b></div>
+    <div><span>주간 평가까지</span><b>{{ '%.1f' % s.status.hours_until_judge }}시간</b></div>
+    <div><span>운용 한도</span><b>{{ s.status.capital_limit_krw | krw }}원</b></div>
+    <div><span>감시 잡</span><b>{{ s.status.watchdog_last_run | dt }}</b></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>API 예산 <span class="state-{{ s.budget.state }}">{{ s.budget.state }}</span></h2>
+  <div class="bar"><div class="fill state-{{ s.budget.state }}" style="width: {{ [s.budget.ratio * 100, 100] | min }}%"></div></div>
+  <div class="kv">
+    <div><span>이번 달 소진</span><b>${{ '%.3f' % s.budget.spent_usd }} / ${{ '%.2f' % s.budget.limit_usd }}</b></div>
+    <div><span>호출 횟수</span><b>{{ s.budget.call_count }}회</b></div>
+    <div><span>리셋</span><b>{{ s.budget.resets_at }}</b></div>
+  </div>
+  {% if s.budget.state == 'suspended' %}
+  <p class="hint danger-text">예산 소진으로 <b>판단이 정지</b>됐다. 손절·익절·서킷브레이커는 계속 작동한다 ({{ s.budget.resets_at }} 자동 재개).</p>
+  {% elif s.budget.state == 'throttled' %}
+  <p class="hint warn-text">80% 초과로 <b>감속 중</b> — effort 하향 + 사이클 간격 4시간 강제.</p>
+  {% endif %}
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script type="module">
+import { lineChart, donutChart, fmtKRW, PALETTE } from '/static/charts.js';
+
+const POS = {{ s.positions | tojson }};
+let lastData = [];
+
+async function loadEquity(period) {
+  const msg = document.getElementById('equity-msg');
+  const canvas = document.getElementById('equity');
+  const data = await (await fetch('/api/equity?period=' + period)).json();
+  lastData = data;
+  // 캔버스만 숨기면 240px 빈 공간이 남는다 — 컨테이너째 접는다.
+  if (data.length < 2) {
+    canvas.parentElement.hidden = true; msg.hidden = false;
+    return;
+  }
+  canvas.parentElement.hidden = false; msg.hidden = true;
+  lineChart(canvas, data);
+}
+
+if (POS.length) {
+  const items = POS.map(p => ({ label: p.market.replace('KRW-', ''), value: p.value_krw }));
+  donutChart(document.getElementById('donut'), items);
+  document.getElementById('legend').innerHTML = items.map((it, i) =>
+    `<span class="lg"><i style="background:${PALETTE[i % PALETTE.length]}"></i>${it.label} ${fmtKRW(it.value)}</span>`
+  ).join('');
+}
+
+document.querySelectorAll('.periods button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.periods button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    loadEquity(b.dataset.p);
+  };
+});
+
+// 창 크기가 바뀌면 캔버스 해상도를 다시 잡아야 한다 (모바일 회전 포함)
+addEventListener('resize', () => {
+  if (lastData.length >= 2) lineChart(document.getElementById('equity'), lastData);
+  if (POS.length) donutChart(document.getElementById('donut'),
+    POS.map(p => ({ label: p.market.replace('KRW-', ''), value: p.value_krw })));
+});
+
+loadEquity('1w');
+setTimeout(() => location.reload(), 60000);
+</script>
+{% endblock %}

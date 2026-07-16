@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{% block title %}AI Trader{% endblock %}</title>
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#0b0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">AI Trader <span class="gen">{{ s.status.generation }}세대 · Lv{{ s.status.level }}</span></div>
+  <div class="badges">
+    {% if s.status.dry_run %}<span class="badge dry">DRY-RUN</span>{% else %}<span class="badge live">실거래</span>{% endif %}
+    {% if s.status.circuit_breaker %}<span class="badge danger">🚨 서킷브레이커</span>{% endif %}
+    {% if s.status.cooldown %}<span class="badge warn">쿨다운</span>{% endif %}
+    {% if s.budget.state == 'throttled' %}<span class="badge warn">감속</span>{% endif %}
+    {% if s.budget.state == 'suspended' %}<span class="badge danger">예산 정지</span>{% endif %}
+  </div>
+</header>
+
+<nav class="tabs">
+  <a href="/" class="{{ 'on' if request.url.path == '/' }}">홈</a>
+  <a href="/trades" class="{{ 'on' if request.url.path == '/trades' }}">거래</a>
+  <a href="/brain" class="{{ 'on' if request.url.path == '/brain' }}">AI 두뇌</a>
+  <a href="/generations" class="{{ 'on' if request.url.path == '/generations' }}">세대</a>
+  <a href="/watchdog" class="{{ 'on' if request.url.path == '/watchdog' }}">감시</a>
+</nav>
+
+<main>
+{% block content %}{% endblock %}
+</main>
+
+<footer>갱신 {{ s.now }} KST · 읽기 전용</footer>
+
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

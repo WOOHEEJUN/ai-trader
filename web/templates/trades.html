@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}거래 내역 · AI Trader{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>거래 내역 <span class="hint">{{ trades | length }}건</span></h2>
+  <div class="filters">
+    <button data-f="all" class="on">전체</button>
+    <button data-f="llm">LLM 판단</button>
+    <button data-f="rule">규칙 청산</button>
+    <button data-f="failed">실패/거부</button>
+  </div>
+
+  {% if not trades %}
+  <div class="empty">아직 거래가 없다</div>
+  {% endif %}
+
+  <div class="trades">
+    {% for t in trades %}
+    <article class="trade {{ 'sell' if t.side == 'sell' else 'buy' }}"
+             data-kind="{{ 'failed' if t.status != 'filled' else ('llm' if t.reason_type == 'llm' else 'rule') }}">
+      <div class="trade-head" onclick="this.parentElement.classList.toggle('open')">
+        <span class="side {{ t.side }}">{{ '매수' if t.side == 'buy' else '매도' }}</span>
+        <span class="mkt">{{ t.market.replace('KRW-','') }}</span>
+        <span class="tag reason-{{ t.reason_type }}">{{ t.reason_label }}</span>
+        {% if t.status != 'filled' %}<span class="tag danger">{{ t.status }}</span>{% endif %}
+        <span class="amt">{{ t.amount_krw | krw }}원</span>
+        <span class="when">{{ t.ts | dt }}</span>
+        <span class="caret">▾</span>
+      </div>
+      <div class="trade-body">
+        <div class="kv">
+          <div><span>수량</span><b>{{ '%.8f' % t.qty }}</b></div>
+          <div><span>체결가</span><b>{{ t.price | krw }}원</b></div>
+          <div><span>수수료</span><b>{{ t.fee_krw | krw }}원</b></div>
+          <div><span>사이클</span><b>{{ t.cycle_id or '-' }}</b></div>
+        </div>
+        {% if t.reject_reason %}
+        <p class="reason danger-text"><b>실패 사유</b><br>{{ t.reject_reason }}</p>
+        {% endif %}
+        {% if t.reason_text %}
+        <p class="reason"><b>{{ '판단 사유' if t.reason_type == 'llm' else '청산 근거' }}</b><br>{{ t.reason_text }}</p>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.filters button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.filters button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    const f = b.dataset.f;
+    document.querySelectorAll('.trade').forEach(t => {
+      t.hidden = !(f === 'all' || t.dataset.kind === f);
+    });
+  };
+});
+</script>
+{% endblock %}
