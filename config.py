@@ -60,6 +60,19 @@ class Settings(BaseSettings):
     watchdog_interval_seconds: int = 60
     snapshot_interval_minutes: int = 60
 
+    # -------------------------------------------------- 스크리너 (비용 0원)
+    # 1시간마다 지표를 계산하되(무료), Claude는 볼 게 있을 때만 부른다.
+    # Claude가 예약한 시각이 되면 무조건 호출하고, 그 전이라도 신호가 잡히면 깨운다.
+    screener_interval_minutes: int = 60
+    max_signal_wakes_per_day: int = 12   # 신호로 깨우는 횟수 상한 (예약 호출은 별도)
+    setup_min_adx: float = 20.0          # 추세 판정 하한
+    setup_rsi_min: float = 40.0          # 추세 진입 시 RSI 하한 (너무 눌린 건 제외)
+    setup_rsi_max: float = 68.0          # 추세 진입 시 RSI 상한 (과열 제외)
+    setup_min_volume_ratio: float = 1.2  # 최근 봉 거래량 / 20봉 평균
+    oversold_rsi: float = 30.0           # 과매도 반등 후보 기준
+    overbought_rsi: float = 75.0         # 보유 종목 과열 경보 기준
+    stop_proximity_ratio: float = 0.6    # 손절선의 60%까지 밀리면 경보
+
     # ------------------------------------------------------------- 주간 평가
     judge_weekday: int = 0  # 0=월요일
     judge_hour: int = 9     # KST
