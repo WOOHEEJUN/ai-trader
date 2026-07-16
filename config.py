@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     upbit_secret_key: str = ""
 
     # ------------------------------------------------------------------ 자금
-    initial_capital_krw: int = 100_000
-    capital_step_krw: int = 50_000  # 주간 평가 성공 시 운용 상한 증액분
+    initial_capital_krw: int = 1_000_000  # 테스트 기간 운용자금. 실거래 전환 시 재검토할 것
+    capital_step_krw: int = 500_000  # 주간 평가 성공 시 운용 상한 증액분 (레벨당 +50%, 기존 비율 유지)
 
     # -------------------------------------------- 가드레일 (executor가 강제)
     pre_judge_cooldown_hours: int = 24  # #1 평가 전 신규매수/비중확대 차단
@@ -135,7 +135,7 @@ def tier_for(level: int) -> PermissionTier:
         level=level,
         max_daily_trades=6 + 2 * level,   # 6 → 12
         universe_size=20 + 5 * level,     # 20 → 35
-        capital_limit_krw=settings.initial_capital_krw + settings.capital_step_krw * level,  # 10만 → 25만
+        capital_limit_krw=settings.initial_capital_krw + settings.capital_step_krw * level,
     )
 
 

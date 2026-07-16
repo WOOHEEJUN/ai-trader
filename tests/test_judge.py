@@ -37,12 +37,15 @@ def test_success_preserves_memory_and_raises_level(week, store, broker):
 
 def test_success_expands_permissions(week, store, broker):
     broker.cash = 110_000.0
+    base = tier_for(0)
     run_judge(store, broker)
 
     tier = tier_for(store.get_state(STATE_LEVEL_KEY))
-    assert tier.max_daily_trades == 8, "일일 매매 6 → 8건"
-    assert tier.universe_size == 25, "유니버스 20 → 25개"
-    assert tier.capital_limit_krw == 150_000, "운용 한도 10만 → 15만원"
+    assert tier.max_daily_trades == base.max_daily_trades + 2, "레벨 1은 일일 매매 +2건"
+    assert tier.universe_size == base.universe_size + 5, "레벨 1은 유니버스 +5개"
+    assert tier.capital_limit_krw == base.capital_limit_krw + settings.capital_step_krw, (
+        "레벨 1은 운용 한도가 capital_step_krw만큼 늘어야 한다"
+    )
 
 
 def test_level_is_capped_at_max(week, store, broker):
@@ -136,7 +139,7 @@ def test_evaluation_is_recorded(week, store, broker):
 
 def test_first_week_without_baseline_uses_initial_capital(store, broker):
     """가동 첫 주에는 기준 스냅샷이 없다 — 초기 자본을 기준으로 잡는다."""
-    broker.cash = 105_000.0
+    broker.cash = settings.initial_capital_krw + 5_000.0  # 초기 자본 대비 소폭 흑자
 
     v = run_judge(store, broker)
 
