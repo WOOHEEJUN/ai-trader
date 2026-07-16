@@ -39,7 +39,10 @@ CREATE TABLE IF NOT EXISTS trades (
     reason_text   TEXT,
     status        TEXT NOT NULL,              -- filled | rejected | failed
     reject_reason TEXT,
-    order_uuid    TEXT
+    order_uuid    TEXT,
+    -- 매도 체결에만 채워진다. 주간 회고의 승률·평균수익·최대손실이 이 값에서 나온다.
+    -- 매도 시점에 계산해두지 않으면 나중에 복원할 수 없다 (포지션은 전량 매도 시 삭제된다).
+    realized_pnl_krw REAL
 );
 CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts);
 
@@ -162,6 +165,14 @@ class Store:
         self._write_lock = threading.Lock()
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        """기존 DB에 나중에 추가된 컬럼을 채운다 (dry-run 중 스키마가 바뀌어도 데이터 유지)."""
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(trades)")}
+        if "realized_pnl_krw" not in cols:
+            conn.execute("ALTER TABLE trades ADD COLUMN realized_pnl_krw REAL")
+            conn.commit()
 
     # ------------------------------------------------------------ 커넥션
     def _conn(self) -> sqlite3.Connection:
@@ -218,13 +229,14 @@ class Store:
         reject_reason: str = "",
         cycle_id: str = "",
         order_uuid: str = "",
+        realized_pnl_krw: float | None = None,
     ) -> int:
         cur = self._write(
             "INSERT INTO trades (ts, cycle_id, side, market, qty, price, amount_krw, fee_krw,"
-            " reason_type, reason_text, status, reject_reason, order_uuid)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " reason_type, reason_text, status, reject_reason, order_uuid, realized_pnl_krw)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (now_iso(), cycle_id, side, market, qty, price, amount_krw, fee_krw,
-             reason_type, reason_text, status, reject_reason, order_uuid),
+             reason_type, reason_text, status, reject_reason, order_uuid, realized_pnl_krw),
         )
         return int(cur.lastrowid)
 

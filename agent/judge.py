@@ -38,6 +38,7 @@ class Verdict:
     generation: int
     level_before: int
     level_after: int
+    week_start: str = ""  # 회고가 이번 주 거래를 추려낼 기준점
 
 
 def run_judge(store: Optional[Store] = None, broker: Optional[Broker] = None) -> Verdict:
@@ -112,4 +113,4 @@ def run_judge(store: Optional[Store] = None, broker: Optional[Broker] = None) ->
     notify(msg, level="info" if success else "warning")
 
     return Verdict(success, killed, start_krw, end_krw, pnl, pnl_pct,
-                   generation_after, level_before, level_after)
+                   generation_after, level_before, level_after, week_start)

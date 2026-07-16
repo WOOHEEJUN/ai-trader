@@ -212,11 +212,13 @@ class Watchdog:
             notify(f"⚠️ {pos.market} {label} 매도 실패: {e}", level="error")
             return None
 
+        # 실현손익은 평단을 아는 지금 계산해둔다 — 전량 매도면 포지션이 사라져 나중엔 못 구한다
+        realized = fill.qty * (fill.price - pos.avg_price) - fill.fee_krw
         self.store.apply_sell(pos.market, fill.qty, take_profit_done=take_profit_done)
         self.store.record_trade(
             side="sell", market=pos.market, reason_type=reason, status="filled",
             qty=fill.qty, price=fill.price, amount_krw=fill.amount_krw, fee_krw=fill.fee_krw,
-            reason_text=detail, order_uuid=fill.uuid,
+            reason_text=detail, order_uuid=fill.uuid, realized_pnl_krw=realized,
         )
         logger.info(f"[감시] {pos.market} {label} 청산: {detail}")
         notify(f"{pos.market} {label} 청산 ({pnl:+.2%}) — {detail}")

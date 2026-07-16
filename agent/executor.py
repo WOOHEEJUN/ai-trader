@@ -213,9 +213,14 @@ class Executor:
     # ---------------------------------------------------------- 주문 집행
     def _place(self, plan: dict, cycle_id: str, rationale: str, result: ExecutionResult) -> None:
         market, side = plan["market"], plan["side"]
+        realized: float | None = None
         try:
             if side == "sell":
+                # 평단은 매도 전에 읽어야 한다 — 전량 매도면 apply_sell이 포지션을 지운다
+                pos = self.store.get_position(market)
                 fill = self.broker.sell_market(market, plan["qty"])
+                if pos:
+                    realized = fill.qty * (fill.price - pos.avg_price) - fill.fee_krw
                 self.store.apply_sell(market, fill.qty)
             else:
                 # 현금은 매도 체결 이후에 확정되므로 이 시점에 다시 확인한다
@@ -233,6 +238,7 @@ class Executor:
                 side=side, market=market, reason_type="llm", status="filled",
                 qty=fill.qty, price=fill.price, amount_krw=fill.amount_krw, fee_krw=fill.fee_krw,
                 reason_text=rationale, cycle_id=cycle_id, order_uuid=fill.uuid,
+                realized_pnl_krw=realized,
             )
             result.fills.append(fill)
             logger.info(f"[실행] {market} {side} 체결: {fill.qty:.8f} @ {fill.price:,.2f}")

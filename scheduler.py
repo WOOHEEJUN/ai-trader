@@ -23,6 +23,7 @@ from loguru import logger
 
 from agent.cycle import run_cycle
 from agent.judge import run_judge
+from agent.review import run_review
 from agent.screener import screen
 from agent.watchdog import Watchdog, compute_portfolio
 from config import KST, settings
@@ -44,6 +45,15 @@ def snapshot_job(store: Store, broker: Broker) -> None:
     total, cash, holdings = compute_portfolio(broker)
     store.record_snapshot(total, cash, holdings)
     logger.debug(f"[스냅샷] 총 {total:,.0f}원 (현금 {cash:,.0f}원)")
+
+
+def judge_and_review(store: Store, broker: Broker) -> None:
+    """주간 평가 → 사후 회고. 회고가 실패해도 평가 결과는 이미 확정이므로 따로 감싼다."""
+    verdict = run_judge(store, broker)
+    try:
+        run_review(verdict, store)
+    except Exception as e:  # noqa: BLE001 — 회고 실패가 평가를 무효화해선 안 된다
+        logger.exception(f"[회고] 실패(평가 결과는 유효): {e}")
 
 
 def screener_tick(store: Store, broker: Broker) -> None:
@@ -88,7 +98,7 @@ def build_scheduler(
     )
 
     sched.add_job(
-        _guard("judge", lambda: run_judge(store, broker)),
+        _guard("judge", lambda: judge_and_review(store, broker)),
         CronTrigger(day_of_week=settings.judge_weekday, hour=settings.judge_hour,
                     minute=0, timezone=KST),
         id="judge", max_instances=1, coalesce=True, misfire_grace_time=3600,
